@@ -387,11 +387,12 @@ async function createAccount(e) {
             return;
         }
         
+        // Save the user to your database but mark them as NOT verified
         let user = {
             id: "USR-" + id(),
             name, email, phone, password, role,
             business_name: businessName,
-            verified: false,
+            verified: false, 
             trust_score: 50,
             joined: new Date().toISOString().split("T")[0]
         };
@@ -400,12 +401,14 @@ async function createAccount(e) {
         await syncData();
         
         toast("✅ Account created! Please check your email to verify.");
+        
+        // Clear the form
         document.getElementById('signup-name').value = '';
         document.getElementById('signup-email').value = '';
         document.getElementById('signup-phone').value = '';
         document.getElementById('signup-password').value = '';
         
-        setTimeout(() => navigate('login'), 3000);
+        // DON'T redirect to login immediately. Wait for them to click the email link.
         
     } catch (error) {
         let user = {
