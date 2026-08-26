@@ -402,6 +402,9 @@ async function createAccount(e) {
             trust_score: 50,
             joined: new Date().toISOString().split("T")[0]
         };
+
+        // 🔥 NEW LINE ADDED: Save the Supabase Auth ID so we can link them
+        user.auth_user_id = authResult.user?.id; 
         
         await supabase.createUser(user);
         await syncData();
