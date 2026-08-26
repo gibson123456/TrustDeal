@@ -39,7 +39,7 @@ const supabase = {
     
     async getUsers() {
         const response = await fetch(`${this.url}/rest/v1/users?select=*`, {
-            headers: { 'apikey': this.key, 'Authorization': `Bearer ${this.key}` }
+            headers: { 'apikey': this.key }
         });
         return response.json();
     },
@@ -73,7 +73,7 @@ const supabase = {
     
     async getDeals() {
         const response = await fetch(`${this.url}/rest/v1/deals?select=*`, {
-            headers: { 'apikey': this.key, 'Authorization': `Bearer ${this.key}` }
+            headers: { 'apikey': this.key }
         });
         return response.json();
     },
@@ -107,7 +107,7 @@ const supabase = {
     
     async getNotifications() {
         const response = await fetch(`${this.url}/rest/v1/notifications?select=*`, {
-            headers: { 'apikey': this.key, 'Authorization': `Bearer ${this.key}` }
+            headers: { 'apikey': this.key }
         });
         return response.json();
     },
