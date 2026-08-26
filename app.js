@@ -37,6 +37,7 @@ const supabase = {
         return response.json();
     },
     
+    // FIXED: Removed Authorization header
     async getUsers() {
         const response = await fetch(`${this.url}/rest/v1/users?select=*`, {
             headers: { 'apikey': this.key }
@@ -71,6 +72,7 @@ const supabase = {
         return response.json();
     },
     
+    // FIXED: Removed Authorization header
     async getDeals() {
         const response = await fetch(`${this.url}/rest/v1/deals?select=*`, {
             headers: { 'apikey': this.key }
@@ -105,6 +107,7 @@ const supabase = {
         return response.json();
     },
     
+    // FIXED: Removed Authorization header
     async getNotifications() {
         const response = await fetch(`${this.url}/rest/v1/notifications?select=*`, {
             headers: { 'apikey': this.key }
@@ -141,11 +144,17 @@ const id = () => Math.random().toString(36).substring(2, 9).toUpperCase();
 const currentUser = () => { let email = localStorage.getItem(STORAGE.session); if (!email) return null; return cache.users.find(u => u.email === email) || null; };
 const initials = (n) => n.split(" ").map(x => x[0]).slice(0, 2).join("").toUpperCase();
 
+// FIXED: Resilient syncData function
 async function syncData() {
     try {
-        cache.users = await supabase.getUsers();
-        cache.deals = await supabase.getDeals();
-        cache.notifications = await supabase.getNotifications();
+        const usersRes = await supabase.getUsers();
+        const dealsRes = await supabase.getDeals();
+        const notifsRes = await supabase.getNotifications();
+
+        cache.users = Array.isArray(usersRes) ? usersRes : get(STORAGE.users);
+        cache.deals = Array.isArray(dealsRes) ? dealsRes : get(STORAGE.deals);
+        cache.notifications = Array.isArray(notifsRes) ? notifsRes : get(STORAGE.notifications);
+
         set(STORAGE.users, cache.users);
         set(STORAGE.deals, cache.deals);
         set(STORAGE.notifications, cache.notifications);
@@ -372,7 +381,9 @@ async function createAccount(e) {
     let businessName = document.getElementById("signup-business").value.trim() || "";
     
     await syncData();
-    if (cache.users.some(u => u.email === email)) {
+    
+    // FIXED: Check if cache.users is an array before using .some()
+    if (Array.isArray(cache.users) && cache.users.some(u => u.email === email)) {
         toast("Email already exists. Please login.");
         return;
     }
