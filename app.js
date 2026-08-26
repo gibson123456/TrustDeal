@@ -37,7 +37,6 @@ const supabase = {
         return response.json();
     },
     
-    // FIXED: Removed Authorization header
     async getUsers() {
         const response = await fetch(`${this.url}/rest/v1/users?select=*`, {
             headers: { 'apikey': this.key }
@@ -72,7 +71,6 @@ const supabase = {
         return response.json();
     },
     
-    // FIXED: Removed Authorization header
     async getDeals() {
         const response = await fetch(`${this.url}/rest/v1/deals?select=*`, {
             headers: { 'apikey': this.key }
@@ -107,7 +105,6 @@ const supabase = {
         return response.json();
     },
     
-    // FIXED: Removed Authorization header
     async getNotifications() {
         const response = await fetch(`${this.url}/rest/v1/notifications?select=*`, {
             headers: { 'apikey': this.key }
@@ -144,7 +141,6 @@ const id = () => Math.random().toString(36).substring(2, 9).toUpperCase();
 const currentUser = () => { let email = localStorage.getItem(STORAGE.session); if (!email) return null; return cache.users.find(u => u.email === email) || null; };
 const initials = (n) => n.split(" ").map(x => x[0]).slice(0, 2).join("").toUpperCase();
 
-// FIXED: Resilient syncData function
 async function syncData() {
     try {
         const usersRes = await supabase.getUsers();
@@ -382,7 +378,6 @@ async function createAccount(e) {
     
     await syncData();
     
-    // FIXED: Check if cache.users is an array before using .some()
     if (Array.isArray(cache.users) && cache.users.some(u => u.email === email)) {
         toast("Email already exists. Please login.");
         return;
@@ -411,15 +406,24 @@ async function createAccount(e) {
         await supabase.createUser(user);
         await syncData();
         
-        toast("✅ Account created! Please check your email to verify.");
-        
         // Clear the form
         document.getElementById('signup-name').value = '';
         document.getElementById('signup-email').value = '';
         document.getElementById('signup-phone').value = '';
         document.getElementById('signup-password').value = '';
         
-        // DON'T redirect to login immediately. Wait for them to click the email link.
+        // 🚨 SHOW A BIG MESSAGE THAT THEY MUST CHECK THEIR EMAIL 🚨
+        document.getElementById("app").innerHTML = `
+            <div class="auth-page">
+                <div class="auth-card" style="text-align:center">
+                    <div class="logo">Trust<span>Deal</span></div>
+                    <div class="label" style="margin-top:25px">VERIFY YOUR EMAIL</div>
+                    <h1>📧 Check your inbox!</h1>
+                    <p class="muted">We sent a confirmation link to <b>${email}</b>.</p>
+                    <p class="muted">Please click the link in the email to activate your account, then log in.</p>
+                    <button class="btn btn-primary" onclick="navigate('login')" style="margin-top:20px">Go to Login</button>
+                </div>
+            </div>`;
         
     } catch (error) {
         let user = {
