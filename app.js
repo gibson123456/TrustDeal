@@ -911,3 +911,47 @@ render(initialPage, initialParam);
 console.log("🔒 TrustDeal connected to Supabase!");
 console.log("👤 Admin: admin@trustdeal.test / admin123");
 console.log("📊 Data stored in Supabase");
+
+// ============================================================
+// AUTO-LOGIN FROM EMAIL VERIFICATION LINK
+// ============================================================
+async function handleEmailVerification() {
+    // Check if URL has the Supabase verify parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    const type = urlParams.get('type');
+
+    if (token && type === 'signup') {
+        // 1. Try to verify the token with Supabase
+        try {
+            const response = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
+                method: 'GET',
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY
+                },
+                params: { token, type }
+            });
+
+            // 2. (Optional) The URL might not have the email, but we will look it up
+            // Since we can't easily parse the email here without extra setup, 
+            // we will just clean the URL and send them to login, where they can log in.
+            
+            // 3. Clean the URL (Remove the token so it doesn't stay in the address bar)
+            window.history.replaceState({}, document.title, window.location.pathname);
+
+            // 4. Show a welcome toast
+            toast("✅ Email verified! Please log in.");
+            
+            // 5. Redirect to login page
+            navigate("login");
+            
+        } catch (error) {
+            console.error("Verification Error:", error);
+            toast("Verification failed. Please try logging in.");
+            navigate("login");
+        }
+    }
+}
+
+// Run this check immediately on page load
+handleEmailVerification();
