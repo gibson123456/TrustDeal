@@ -16,10 +16,7 @@ const supabase = {
     async signUp(email, password, userData) {
         const response = await fetch(`${this.url}/auth/v1/signup`, {
             method: 'POST',
-            headers: {
-                'apikey': this.key,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'apikey': this.key, 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password, data: userData })
         });
         return response.json();
@@ -28,10 +25,7 @@ const supabase = {
     async signIn(email, password) {
         const response = await fetch(`${this.url}/auth/v1/token?grant_type=password`, {
             method: 'POST',
-            headers: {
-                'apikey': this.key,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'apikey': this.key, 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password })
         });
         return response.json();
@@ -163,7 +157,6 @@ const id = () => Math.random().toString(36).substring(2, 9).toUpperCase();
 const currentUser = () => { let email = localStorage.getItem(STORAGE.session); if (!email) return null; return cache.users.find(u => u.email === email) || null; };
 const initials = (n) => n.split(" ").map(x => x[0]).slice(0, 2).join("").toUpperCase();
 
-// Match a deal to a user by name, business_name, or email (either side)
 const userMatchesDeal = (user, deal) => {
     if (!user || !deal) return false;
     const userKeys = [user.name, user.business_name, user.email].filter(Boolean);
@@ -223,7 +216,7 @@ async function syncData() {
         set(STORAGE.users, cache.users);
         set(STORAGE.deals, cache.deals);
         set(STORAGE.notifications, cache.notifications);
-        console.log("✅ Synced:", cache.users.length, "users");
+        console.log("✅ Synced:", cache.users.length, "users,", cache.deals.length, "deals");
     } catch (error) {
         console.error("❌ Supabase sync failed:", error);
         console.log("Using cached data");
@@ -482,9 +475,7 @@ async function createAccount(e) {
 
     let authResult;
     try {
-        authResult = await supabase.signUp(email, password, {
-            name, phone, role, business_name: businessName
-        });
+        authResult = await supabase.signUp(email, password, { name, phone, role, business_name: businessName });
     } catch (err) {
         toast("Could not reach server. Check your connection.");
         return;
@@ -787,30 +778,68 @@ async function createDeal(e) {
         initiator: isSupplier ? "supplier" : "buyer"
     };
 
+    // Try Supabase first
+    let saved = false;
     try {
-        await supabase.createDeal(deal);
-        await syncData();
-        await addNotification("New deal created", deal.id + " - " + deal.title + " by " + user.name, "blue");
-        if (deal.supplier_email) await addNotification("You have a new deal", deal.id + " — " + deal.title + " awaiting your response.", "blue", deal.supplier_email);
-        if (deal.buyer_email) await addNotification("You have a new deal", deal.id + " — " + deal.title + " awaiting your response.", "blue", deal.buyer_email);
-        toast("Protected deal created!");
-        setTimeout(() => navigate("transaction", deal.id), 500);
-    } catch {
-        let deals = get(STORAGE.deals);
-        deals.unshift(deal);
-        set(STORAGE.deals, deals);
-        toast("Protected deal created!");
-        setTimeout(() => navigate("transaction", deal.id), 500);
+        const result = await supabase.createDeal(deal);
+        if (Array.isArray(result) && result.length > 0) {
+            saved = true;
+            console.log("✅ Deal saved to Supabase:", result[0]);
+        } else {
+            console.warn("⚠️ Supabase createDeal returned unexpected result:", result);
+        }
+    } catch (err) {
+        console.warn("⚠️ Supabase createDeal threw:", err);
     }
+
+    // Always write to local cache too — so the transaction page can find it
+    let localDeals = get(STORAGE.deals).filter(x => x.id !== deal.id);
+    localDeals.unshift(deal);
+    set(STORAGE.deals, localDeals);
+
+    // Update in-memory cache immediately
+    cache.deals = [deal, ...cache.deals.filter(x => x.id !== deal.id)];
+
+    if (saved) {
+        await syncData();
+        // Ensure our new deal is still in cache after sync (in case the fetch missed it)
+        if (!cache.deals.find(x => x.id === deal.id)) {
+            cache.deals.unshift(deal);
+        }
+    }
+
+    // Notifications
+    addNotification("New deal created", deal.id + " - " + deal.title + " by " + user.name, "blue").catch(() => {});
+    if (deal.supplier_email) addNotification("You have a new deal", deal.id + " — " + deal.title + " awaiting your response.", "blue", deal.supplier_email).catch(() => {});
+    if (deal.buyer_email) addNotification("You have a new deal", deal.id + " — " + deal.title + " awaiting your response.", "blue", deal.buyer_email).catch(() => {});
+
+    toast(saved ? "Protected deal created!" : "Deal saved locally — check connection.");
+    setTimeout(() => navigate("transaction", deal.id), 500);
 }
 
 // ============================================================
 // TRANSACTION PAGE
 // ============================================================
-function transactionPage(dealId) {
+async function transactionPage(dealId) {
+    // Try cache first
     let deals = cache.deals.length > 0 ? cache.deals : get(STORAGE.deals);
     let d = deals.find(x => x.id === dealId);
-    if (!d) return `${dashboardNavbar()}<main class="container"><div class="card"><h1>Transaction not found</h1><button class="btn btn-light" onclick="navigate('dashboard')">Back</button></div></main>`;
+
+    // If not found, force a fresh sync and try again
+    if (!d) {
+        await syncData();
+        deals = cache.deals;
+        d = deals.find(x => x.id === dealId);
+    }
+
+    // Last resort: check localStorage
+    if (!d) {
+        d = get(STORAGE.deals).find(x => x.id === dealId);
+    }
+
+    if (!d) {
+        return `${dashboardNavbar()}<main class="container"><div class="card"><h1>Transaction not found</h1><p class="muted">This deal may have been deleted or the link is incorrect.</p><button class="btn btn-light" onclick="navigate('dashboard')">Back to Dashboard</button></div></main>`;
+    }
 
     let completed = d.status === "completed";
     let disputed = d.dispute === true;
@@ -1359,7 +1388,7 @@ async function render(page, param) {
         case "signup": app.innerHTML = signup(); break;
         case "dashboard": app.innerHTML = await dashboard(); break;
         case "create": app.innerHTML = createDealPage(); break;
-        case "transaction": app.innerHTML = transactionPage(param); break;
+        case "transaction": app.innerHTML = await transactionPage(param); break;
         case "transactions": app.innerHTML = transactionsPage(); break;
         case "account": app.innerHTML = accountPage(); break;
         case "admin-login": app.innerHTML = adminLogin(); break;
