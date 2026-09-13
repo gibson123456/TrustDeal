@@ -12,7 +12,7 @@ console.log("🔗 TrustDeal connecting to Supabase...");
 const supabase = {
     url: SUPABASE_URL,
     key: SUPABASE_ANON_KEY,
-    
+
     async signUp(email, password, userData) {
         const response = await fetch(`${this.url}/auth/v1/signup`, {
             method: 'POST',
@@ -24,7 +24,7 @@ const supabase = {
         });
         return response.json();
     },
-    
+
     async signIn(email, password) {
         const response = await fetch(`${this.url}/auth/v1/token?grant_type=password`, {
             method: 'POST',
@@ -36,14 +36,14 @@ const supabase = {
         });
         return response.json();
     },
-    
+
     async getUsers() {
         const response = await fetch(`${this.url}/rest/v1/users?select=*`, {
             headers: { 'apikey': this.key }
         });
         return response.json();
     },
-    
+
     async createUser(user) {
         const response = await fetch(`${this.url}/rest/v1/users`, {
             method: 'POST',
@@ -57,7 +57,7 @@ const supabase = {
         });
         return response.json();
     },
-    
+
     async updateUser(email, data) {
         const response = await fetch(`${this.url}/rest/v1/users?email=eq.${encodeURIComponent(email)}`, {
             method: 'PATCH',
@@ -70,14 +70,14 @@ const supabase = {
         });
         return response.json();
     },
-    
+
     async getDeals() {
         const response = await fetch(`${this.url}/rest/v1/deals?select=*`, {
             headers: { 'apikey': this.key }
         });
         return response.json();
     },
-    
+
     async createDeal(deal) {
         const response = await fetch(`${this.url}/rest/v1/deals`, {
             method: 'POST',
@@ -91,7 +91,7 @@ const supabase = {
         });
         return response.json();
     },
-    
+
     async updateDeal(id, data) {
         const response = await fetch(`${this.url}/rest/v1/deals?id=eq.${encodeURIComponent(id)}`, {
             method: 'PATCH',
@@ -104,14 +104,14 @@ const supabase = {
         });
         return response.json();
     },
-    
+
     async getNotifications() {
         const response = await fetch(`${this.url}/rest/v1/notifications?select=*`, {
             headers: { 'apikey': this.key }
         });
         return response.json();
     },
-    
+
     async createNotification(notification) {
         const response = await fetch(`${this.url}/rest/v1/notifications`, {
             method: 'POST',
@@ -128,6 +128,28 @@ const supabase = {
 };
 
 // ============================================================
+// CONSTANTS
+// ============================================================
+const LOGISTICS_COMPANIES = [
+    "GIG Logistics",
+    "Kwik Delivery",
+    "Sendbox",
+    "DHL Nigeria",
+    "TrustDeal Logistics"
+];
+
+const REGION_ROUTES = [
+    { region: "South West", states: ["Lagos", "Ogun", "Oyo", "Osun", "Ondo", "Ekiti"] },
+    { region: "South East", states: ["Enugu", "Anambra", "Abia", "Imo", "Ebonyi"] },
+    { region: "South South", states: ["Rivers", "Delta", "Bayelsa", "Cross River", "Akwa Ibom", "Edo"] },
+    { region: "North Central", states: ["FCT Abuja", "Plateau", "Kogi", "Benue", "Niger", "Nasarawa", "Kwara"] },
+    { region: "North East", states: ["Borno", "Yobe", "Adamawa", "Bauchi", "Gombe", "Taraba"] },
+    { region: "North West", states: ["Kano", "Kaduna", "Katsina", "Sokoto", "Kebbi", "Zamfara", "Jigawa"] }
+];
+
+const ETA_OPTIONS = ["2 hours", "4 hours", "6 hours", "Today, 5:00 PM", "Today, 8:00 PM", "Tomorrow morning", "Tomorrow afternoon"];
+
+// ============================================================
 // HELPERS
 // ============================================================
 const STORAGE = { users: "td_users", deals: "td_deals", notifications: "td_notifications", session: "td_session", admin: "td_admin" };
@@ -140,6 +162,53 @@ const toast = (msg) => { let el = document.getElementById("toast"); el.innerText
 const id = () => Math.random().toString(36).substring(2, 9).toUpperCase();
 const currentUser = () => { let email = localStorage.getItem(STORAGE.session); if (!email) return null; return cache.users.find(u => u.email === email) || null; };
 const initials = (n) => n.split(" ").map(x => x[0]).slice(0, 2).join("").toUpperCase();
+
+// Match a deal to a user by name, business_name, or email (either side)
+const userMatchesDeal = (user, deal) => {
+    if (!user || !deal) return false;
+    const userKeys = [user.name, user.business_name, user.email].filter(Boolean);
+    const dealKeys = [deal.buyer, deal.buyer_email, deal.supplier, deal.supplier_email].filter(Boolean);
+    return userKeys.some(k => dealKeys.includes(k));
+};
+
+const userRoleInDeal = (user, deal) => {
+    if (!user || !deal) return null;
+    const userKeys = [user.name, user.business_name, user.email].filter(Boolean);
+    if (userKeys.includes(deal.buyer) || userKeys.includes(deal.buyer_email)) return "buyer";
+    if (userKeys.includes(deal.supplier) || userKeys.includes(deal.supplier_email)) return "supplier";
+    return null;
+};
+
+const generateTrackingId = (companyName) => {
+    const firstWord = companyName.trim().split(/\s+/)[0].toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const prefix = firstWord || "COURIER";
+    const digits = Math.floor(1000000 + Math.random() * 9000000);
+    return `TRK-${prefix}-${digits}`;
+};
+
+const pickRegionFor = (location) => {
+    if (!location) return REGION_ROUTES[0];
+    const lower = location.toLowerCase();
+    for (const route of REGION_ROUTES) {
+        if (route.states.some(s => lower.includes(s.toLowerCase()))) return route;
+        if (lower.includes(route.region.toLowerCase())) return route;
+    }
+    return REGION_ROUTES[0];
+};
+
+const buildCheckpoints = (deal) => {
+    const route = pickRegionFor(deal.delivery);
+    const states = route.states;
+    const midState = states[Math.min(2, states.length - 1)];
+    const endState = states[states.length - 1];
+    const originCity = states[0] + " depot";
+    return [
+        `Departed from ${originCity}, ${route.region} region`,
+        `Passing through ${midState}, ${route.region} region`,
+        `Arrived ${endState}, ${route.region} region`,
+        `Out for delivery to ${deal.delivery || "buyer address"}`
+    ];
+};
 
 async function syncData() {
     try {
@@ -164,15 +233,15 @@ async function syncData() {
     }
 }
 
-async function addNotification(title, text, type = "green") {
-    const notif = { id: "NTF-" + id(), title, text, type, time: "Just now" };
+async function addNotification(title, text, type = "green", forEmail = null) {
+    const notif = { id: "NTF-" + id(), title, text, type, time: "Just now", for_email: forEmail };
     try {
         await supabase.createNotification(notif);
         cache.notifications.unshift(notif);
     } catch {
         let n = get(STORAGE.notifications);
         n.unshift(notif);
-        set(STORAGE.notifications, n.slice(0, 20));
+        set(STORAGE.notifications, n.slice(0, 50));
     }
 }
 
@@ -182,22 +251,17 @@ async function addNotification(title, text, type = "green") {
 async function seedData() {
     try {
         const users = await supabase.getUsers();
-        if (users.length === 0) {
+        if (Array.isArray(users) && users.length === 0) {
             const demoUsers = [
                 { id: "USR-001", name: "ABC Trading Ltd", email: "abc@example.com", phone: "+234 802 111 2222", role: "customer", verified: true, business_name: "ABC Trading Ltd", trust_score: 96, joined: "Jan 2025", password: "demo123" },
                 { id: "USR-003", name: "John Ade", email: "john@example.com", phone: "+234 801 234 5678", role: "customer", verified: true, business_name: "", trust_score: 98, joined: "Dec 2024", password: "demo123" },
                 { id: "USR-ADMIN", name: "TrustDeal Admin", email: "admin@trustdeal.test", phone: "+234 800 000 0000", password: "admin123", role: "admin", verified: true, business_name: "TrustDeal", trust_score: 100, joined: "Jan 2025" }
             ];
             for (const u of demoUsers) await supabase.createUser(u);
-            
-            const demoDeals = [
-                { id: "TD-10452", title: "500 bags cement", product: "Building Materials", buyer: "ABC Trading Ltd", supplier: "XYZ Manufacturing", amount: 5000000, buyer_paid: true, supplier_delivered: false, supplier_paid: false, status: "escrow", dispute: false, quantity: "500 bags", delivery: "Abeokuta, Ogun State", condition: "Release after verified delivery", created: "2025-04-15" },
-                { id: "TD-10451", title: "Industrial food supply", product: "Food", buyer: "John Ade", supplier: "Ogun Foods", amount: 2400000, buyer_paid: true, supplier_delivered: true, supplier_paid: true, status: "completed", dispute: false, quantity: "500 bags", delivery: "Lagos", condition: "Release after buyer confirmation", created: "2025-03-20" }
-            ];
-            for (const d of demoDeals) await supabase.createDeal(d);
         }
         await syncData();
     } catch (error) {
+        console.error("Seed failed:", error);
         if (!localStorage.getItem(STORAGE.users)) {
             set(STORAGE.users, [
                 { id: "USR-003", name: "John Ade", email: "john@example.com", phone: "+234 801 234 5678", role: "customer", verified: true, business_name: "", trust_score: 98, joined: "Dec 2024", password: "demo123" },
@@ -214,7 +278,6 @@ async function seedData() {
 const navigate = (page, param = null) => { let hash = "#" + page; if (param) hash += "=" + encodeURIComponent(param); history.pushState({ page, param }, "", hash); render(page, param); };
 const currentRoute = () => { let h = location.hash.slice(1) || "home"; let [p, x] = h.split("="); return [p, x ? decodeURIComponent(x) : null]; };
 window.onpopstate = () => { let [p, x] = currentRoute(); render(p, x); };
-window.onhashchange = () => { let [p, x] = currentRoute(); render(p, x); };
 
 // ============================================================
 // NAVBARS
@@ -321,7 +384,6 @@ async function loginUser(e) {
     let email = document.getElementById("login-email").value.trim();
     let password = document.getElementById("login-password").value;
 
-    // 1. Ask Supabase Auth if this email + password is valid
     let authResult;
     try {
         authResult = await supabase.signIn(email, password);
@@ -330,7 +392,6 @@ async function loginUser(e) {
         return;
     }
 
-    // 2. Handle Supabase errors
     if (!authResult || authResult.error) {
         const msg = (authResult && authResult.error_description) || (authResult && authResult.error && authResult.error.message) || "Login failed.";
         if (msg.toLowerCase().includes("email not confirmed")) {
@@ -350,13 +411,10 @@ async function loginUser(e) {
 
     const authUserId = authResult.user.id;
 
-    // 3. Refresh local cache from Supabase
     await syncData();
 
-    // 4. Find matching profile row by auth_user_id (not email)
     let user = cache.users.find(u => u.auth_user_id === authUserId);
 
-    // 5. If missing (orphan auth user), auto-create the profile row
     if (!user) {
         const meta = authResult.user.user_metadata || {};
         user = {
@@ -378,14 +436,12 @@ async function loginUser(e) {
             console.warn("Could not save profile row:", err);
         }
     } else if (user.verified === false && authResult.user.email_confirmed_at) {
-        // Row exists but still marked unverified -> flip it
         try {
             await supabase.updateUser(email, { verified: true });
             user.verified = true;
         } catch (err) { /* ignore */ }
     }
 
-    // 6. Set session and go to dashboard
     localStorage.setItem(STORAGE.session, user.email);
     toast("Welcome back, " + (user.name || "friend") + "!");
     navigate("dashboard");
@@ -424,7 +480,6 @@ async function createAccount(e) {
     let role = document.getElementById("signup-role").value;
     let businessName = document.getElementById("signup-business").value.trim() || "";
 
-    // 1. Create Supabase Auth user
     let authResult;
     try {
         authResult = await supabase.signUp(email, password, {
@@ -446,7 +501,6 @@ async function createAccount(e) {
         return;
     }
 
-    // 2. Create matching profile row in the users table
     const user = {
         id: "USR-" + id(),
         auth_user_id: authResult.user.id,
@@ -459,7 +513,6 @@ async function createAccount(e) {
 
     try {
         const insertResult = await supabase.createUser(user);
-        // Supabase returns an array on success, or an object with `error`/`code` on failure
         if (!Array.isArray(insertResult)) {
             document.getElementById("app").innerHTML = `
                 <div class="auth-page">
@@ -487,7 +540,6 @@ async function createAccount(e) {
         return;
     }
 
-    // 3. Success — clear form and show verification message
     document.getElementById('signup-name').value = '';
     document.getElementById('signup-email').value = '';
     document.getElementById('signup-phone').value = '';
@@ -518,21 +570,21 @@ function logout() {
 async function dashboard() {
     let user = currentUser();
     if (!user) return login();
-    
+
     await syncData();
     let allDeals = cache.deals;
-    let deals = allDeals.filter(d => d.buyer === user.name || d.supplier === user.name || d.buyer === user.business_name || d.supplier === user.business_name);
-    
-    if (deals.length === 0 && allDeals.length > 0) deals = allDeals;
-    
+    let deals = allDeals.filter(d => userMatchesDeal(user, d));
+
     let total = deals.reduce((s, d) => s + d.amount, 0);
     let secured = deals.filter(d => d.buyer_paid && !d.supplier_paid).reduce((s, d) => s + d.amount, 0);
     let completed = deals.filter(d => d.status === "completed").length;
     let pending = deals.filter(d => d.status === "pending").length;
     let escrow = deals.filter(d => d.status === "escrow").length;
-    
+    let inTransit = deals.filter(d => d.status === "in_transit" || d.status === "picked_up").length;
+    let delivered = deals.filter(d => d.status === "delivered").length;
+
     let dealsContent = deals.length === 0 ? `<div class="empty-state"><div class="icon">📦</div><h2>No transactions yet</h2><p>Start by creating your first protected deal.</p><button class="btn btn-green" onclick="navigate('create')" style="margin-top:16px">+ Create Your First Deal</button></div>` : deals.map(dealRow).join("");
-    
+
     return `${dashboardNavbar()}
     <main class="container">
         <div class="page-header">
@@ -552,8 +604,8 @@ async function dashboard() {
         <section class="grid grid-4 section">
             <div class="card" style="background:var(--green-light)"><div class="label">ESCROW</div><div class="stat-number">${escrow}</div></div>
             <div class="card" style="background:var(--orange-light)"><div class="label">PENDING</div><div class="stat-number">${pending}</div></div>
-            <div class="card" style="background:var(--blue-light)"><div class="label">DELIVERED</div><div class="stat-number">${deals.filter(d => d.status === "delivered").length}</div></div>
-            <div class="card" style="background:var(--red-light)"><div class="label">DISPUTES</div><div class="stat-number">${deals.filter(d => d.dispute).length}</div></div>
+            <div class="card" style="background:var(--purple-light)"><div class="label">IN TRANSIT</div><div class="stat-number">${inTransit}</div></div>
+            <div class="card" style="background:var(--blue-light)"><div class="label">DELIVERED</div><div class="stat-number">${delivered}</div></div>
         </section>
         <section class="card section">
             <div class="page-header"><div><h2>Your transactions</h2><div class="muted small">${deals.length} deal${deals.length !== 1 ? "s" : ""}</div></div><span class="badge badge-green">● ${deals.length > 0 ? "Active" : "Ready"}</span></div>
@@ -561,34 +613,42 @@ async function dashboard() {
         </section>
         <section class="grid grid-2 section">
             <div class="card"><div class="label">ACCOUNT</div><h2>${user.name}</h2><p class="muted">${user.email}</p><p class="small">Joined: ${user.joined || "N/A"} · ${user.role}</p><button class="btn btn-light" onclick="navigate('account')">View account</button></div>
-            <div class="card"><div class="label">NOTIFICATIONS</div>${notificationPreview()}</div>
+            <div class="card"><div class="label">NOTIFICATIONS</div>${notificationPreview(user)}</div>
         </section>
     </main>`;
 }
 
+function statusBadge(d) {
+    if (d.status === "escrow") return '<span class="badge badge-green">🟢 Escrow</span>';
+    if (d.status === "logistics_chosen") return '<span class="badge badge-purple">📦 Logistics Chosen</span>';
+    if (d.status === "tracking_confirmed") return '<span class="badge badge-purple">✅ Tracking Confirmed</span>';
+    if (d.status === "picked_up") return '<span class="badge badge-purple">🚚 Picked Up</span>';
+    if (d.status === "in_transit") return '<span class="badge badge-purple">📍 In Transit</span>';
+    if (d.status === "delivered") return '<span class="badge badge-blue">📬 Delivered</span>';
+    if (d.status === "completed") return '<span class="badge badge-green">🟢 Completed</span>';
+    if (d.status === "dispute") return '<span class="badge badge-red">🔴 Dispute</span>';
+    return '<span class="badge badge-orange">🟠 Pending</span>';
+}
+
 function dealRow(d) {
-    let cls = "badge-orange", txt = "Pending";
-    if (d.status === "escrow") { cls = "badge-green"; txt = "Escrow"; }
-    if (d.status === "delivered") { cls = "badge-blue"; txt = "Delivery"; }
-    if (d.status === "completed") { cls = "badge-green"; txt = "Completed"; }
-    if (d.status === "dispute") { cls = "badge-red"; txt = "Dispute"; }
-    
     let user = currentUser();
-    let role = (d.buyer === user.name || d.buyer === user.business_name) ? "You (Buyer)" : "You (Supplier)";
-    
+    let role = userRoleInDeal(user, d);
+    let roleLabel = role === "buyer" ? "You (Buyer)" : role === "supplier" ? "You (Supplier)" : "—";
+
     return `<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:15px;align-items:center;padding:17px 0;border-bottom:1px solid var(--line)">
         <div><b>${d.title}</b><div class="small muted">${d.id}</div></div>
         <div>${money(d.amount)}</div>
-        <div class="small"><b>${role}</b><br><span class="small muted">${d.buyer} → ${d.supplier}</span></div>
-        <div><span class="badge ${cls}">${txt}</span></div>
+        <div class="small"><b>${roleLabel}</b><br><span class="small muted">${d.buyer} → ${d.supplier}</span></div>
+        <div>${statusBadge(d)}</div>
         <button class="btn btn-light" onclick="navigate('transaction','${d.id}')">View</button>
     </div>`;
 }
 
-function notificationPreview() {
+function notificationPreview(user) {
     let n = cache.notifications.length > 0 ? cache.notifications : get(STORAGE.notifications);
+    if (user && user.email) n = n.filter(x => !x.for_email || x.for_email === user.email);
     return n.slice(0, 3).map(n => `<div class="notification">
-        <span class="badge ${n.type === "red" ? "badge-red" : n.type === "blue" ? "badge-blue" : "badge-green"}">●</span>
+        <span class="badge ${n.type === "red" ? "badge-red" : n.type === "blue" ? "badge-blue" : n.type === "purple" ? "badge-purple" : "badge-green"}">●</span>
         <div><b>${n.title}</b><div class="small muted">${n.text}</div><div class="small muted">${n.time}</div></div>
     </div>`).join("") || `<p class="muted">No notifications yet.</p>`;
 }
@@ -599,19 +659,49 @@ function notificationPreview() {
 function createDealPage() {
     let user = currentUser();
     if (!user) return login();
-    
+
+    let isSupplier = user.role === "supplier";
+    let counterpartyLabel = isSupplier ? "Buyer / Customer" : "Supplier / Vendor";
+    let counterpartyNamePlaceholder = isSupplier ? "ABC Trading Ltd" : "XYZ Manufacturing Ltd";
+    let counterpartyEmailPlaceholder = isSupplier ? "buyer@example.com" : "supplier@example.com";
+    let counterpartyNameId = isSupplier ? "deal-buyer" : "deal-supplier";
+    let counterpartyEmailId = isSupplier ? "deal-buyer-email" : "deal-supplier-email";
+
+    let logisticsField = isSupplier ? `
+        <label>Logistics Company
+            <select id="deal-logistics" class="input" onchange="toggleCustomLogistics()">
+                ${LOGISTICS_COMPANIES.map(c => `<option value="${c}">${c}</option>`).join("")}
+                <option value="__other__">Other (enter manually)</option>
+            </select>
+        </label>
+        <label id="deal-logistics-custom-wrap" style="display:none">Custom logistics name
+            <input id="deal-logistics-custom" class="input" placeholder="SwiftCourier Ltd">
+        </label>
+    ` : `
+        <div class="card" style="background:var(--bg);box-shadow:none">
+            <b>Logistics will be chosen by the supplier</b>
+            <p class="small muted" style="margin:6px 0 0">Once you fund the escrow, the supplier will select a logistics company and send you their tracking ID for confirmation.</p>
+        </div>
+    `;
+
     return `${dashboardNavbar()}
     <main class="container">
         <div class="page-header"><div><div class="label">PROTECTED DEAL</div><h1>Create a transaction</h1><p class="muted">Define exactly what the buyer and supplier have agreed to.</p></div></div>
         <div class="card" style="max-width:750px">
             <form class="form" onsubmit="createDeal(event)">
                 <label>Transaction title<input id="deal-title" class="input" placeholder="Building materials supply" required></label>
-                <label>Supplier / Vendor<input id="deal-supplier" class="input" placeholder="XYZ Manufacturing Ltd" required></label>
+
+                <label>${counterpartyLabel}<input id="${counterpartyNameId}" class="input" placeholder="${counterpartyNamePlaceholder}" required></label>
+                <label>${counterpartyLabel} email<input id="${counterpartyEmailId}" class="input" type="email" placeholder="${counterpartyEmailPlaceholder}" required></label>
+
                 <label>Product / service<input id="deal-product" class="input" placeholder="Cement, rice, equipment..." required></label>
                 <label>Quantity<input id="deal-quantity" class="input" placeholder="500 bags" required></label>
                 <label>Transaction value (NGN)<input id="deal-amount" class="input" type="number" min="1" placeholder="5000000" required></label>
                 <label>Delivery location<input id="deal-location" class="input" placeholder="Abeokuta, Ogun State" required></label>
                 <label>Payment condition<select id="deal-condition" class="input"><option>Release after verified delivery</option><option>Release after buyer confirmation</option><option>Milestone payment</option></select></label>
+
+                ${logisticsField}
+
                 <div class="card" style="background:var(--bg);box-shadow:none"><b>How protection works</b><p class="small muted">Buyer payment is represented as secured funds in this prototype.</p></div>
                 <button class="btn btn-green" type="submit">Create protected deal</button>
             </form>
@@ -619,16 +709,62 @@ function createDealPage() {
     </main>`;
 }
 
+function toggleCustomLogistics() {
+    let sel = document.getElementById("deal-logistics");
+    let wrap = document.getElementById("deal-logistics-custom-wrap");
+    if (!sel || !wrap) return;
+    wrap.style.display = sel.value === "__other__" ? "block" : "none";
+}
+
 async function createDeal(e) {
     e.preventDefault();
     let user = currentUser();
     if (!user) { toast("Please login first."); navigate("login"); return; }
-    
+
+    let isSupplier = user.role === "supplier";
+
+    let counterpartyName = (isSupplier
+        ? document.getElementById("deal-buyer").value
+        : document.getElementById("deal-supplier").value
+    ).trim();
+
+    let counterpartyEmail = (isSupplier
+        ? document.getElementById("deal-buyer-email").value
+        : document.getElementById("deal-supplier-email").value
+    ).trim().toLowerCase();
+
+    if (!counterpartyEmail) {
+        toast("Please enter the " + (isSupplier ? "buyer's" : "supplier's") + " email address.");
+        return;
+    }
+
+    let logisticsCompany = "";
+    let trackingId = "";
+
+    if (isSupplier) {
+        let sel = document.getElementById("deal-logistics").value;
+        if (sel === "__other__") {
+            let custom = (document.getElementById("deal-logistics-custom").value || "").trim();
+            if (!custom) { toast("Please enter the logistics company name."); return; }
+            logisticsCompany = custom;
+        } else {
+            logisticsCompany = sel;
+        }
+        trackingId = generateTrackingId(logisticsCompany);
+    }
+
+    let buyer = isSupplier ? counterpartyName : (user.business_name || user.name);
+    let buyerEmail = isSupplier ? counterpartyEmail : user.email;
+    let supplier = isSupplier ? (user.business_name || user.name) : counterpartyName;
+    let supplierEmail = isSupplier ? user.email : counterpartyEmail;
+
     let deal = {
         id: "TD-" + id(),
         title: document.getElementById("deal-title").value.trim(),
-        buyer: user.business_name || user.name,
-        supplier: document.getElementById("deal-supplier").value.trim(),
+        buyer,
+        buyer_email: buyerEmail,
+        supplier,
+        supplier_email: supplierEmail,
         product: document.getElementById("deal-product").value.trim(),
         quantity: document.getElementById("deal-quantity").value.trim(),
         amount: Number(document.getElementById("deal-amount").value),
@@ -639,13 +775,24 @@ async function createDeal(e) {
         buyer_paid: false,
         supplier_delivered: false,
         supplier_paid: false,
-        dispute: false
+        dispute: false,
+        logistics_company: logisticsCompany,
+        tracking_id: trackingId,
+        logistics_checkpoint: 0,
+        logistics_location: "",
+        logistics_region: "",
+        logistics_eta: "",
+        buyer_confirmed_tracking: false,
+        buyer_confirmed_receipt: false,
+        initiator: isSupplier ? "supplier" : "buyer"
     };
-    
+
     try {
         await supabase.createDeal(deal);
         await syncData();
         await addNotification("New deal created", deal.id + " - " + deal.title + " by " + user.name, "blue");
+        if (deal.supplier_email) await addNotification("You have a new deal", deal.id + " — " + deal.title + " awaiting your response.", "blue", deal.supplier_email);
+        if (deal.buyer_email) await addNotification("You have a new deal", deal.id + " — " + deal.title + " awaiting your response.", "blue", deal.buyer_email);
         toast("Protected deal created!");
         setTimeout(() => navigate("transaction", deal.id), 500);
     } catch {
@@ -664,14 +811,17 @@ function transactionPage(dealId) {
     let deals = cache.deals.length > 0 ? cache.deals : get(STORAGE.deals);
     let d = deals.find(x => x.id === dealId);
     if (!d) return `${dashboardNavbar()}<main class="container"><div class="card"><h1>Transaction not found</h1><button class="btn btn-light" onclick="navigate('dashboard')">Back</button></div></main>`;
+
     let completed = d.status === "completed";
     let disputed = d.dispute === true;
-    
+    let headerBadge = completed ? "badge-green" : disputed ? "badge-red" : (d.status === "in_transit" || d.status === "picked_up" || d.status === "logistics_chosen" || d.status === "tracking_confirmed") ? "badge-purple" : "badge-blue";
+    let headerText = completed ? "● Completed" : disputed ? "● Dispute" : d.status === "in_transit" ? "● In Transit" : d.status === "picked_up" ? "● Picked Up" : d.status === "delivered" ? "● Delivered" : d.status === "logistics_chosen" ? "● Logistics Chosen" : d.status === "tracking_confirmed" ? "● Tracking Confirmed" : "● Protected";
+
     return `${dashboardNavbar()}
     <main class="container">
         <div class="page-header">
             <div><div class="label">TRANSACTION ${d.id}</div><h1>${d.title}</h1><p class="muted">Track exactly where the transaction stands.</p></div>
-            <span class="badge ${completed ? "badge-green" : disputed ? "badge-red" : "badge-blue"}">${completed ? "● Completed" : disputed ? "● Dispute" : "● Protected"}</span>
+            <span class="badge ${headerBadge}">${headerText}</span>
         </div>
         <div class="transaction-flow">
             <div class="party-card buyer">
@@ -700,24 +850,112 @@ function transactionPage(dealId) {
                 ${d.supplier_paid ? `<span class="badge badge-green">🟢 PAYMENT RELEASED</span>` : `<span class="badge badge-red">🔴 PAYMENT WAITING</span>`}
             </div>
         </div>
+
+        ${logisticsSection(d)}
+
         <section class="grid grid-2 section">
             <div class="card"><div class="label">TRANSACTION DETAILS</div><h2>Order information</h2><p><b>Product:</b> ${d.product}</p><p><b>Quantity:</b> ${d.quantity || "—"}</p><p><b>Delivery:</b> ${d.delivery || "—"}</p><p><b>Payment rule:</b> ${d.condition || "Standard"}</p><p><b>Created:</b> ${d.created || "—"}</p></div>
-            <div class="card"><div class="label">TRANSACTION PROTECTION</div><h2>Where is the money?</h2>${d.buyer_paid && !d.supplier_paid ? `<div style="background:var(--green-light);padding:17px;border-radius:12px"><b style="color:#166534">🟢 Customer has credited</b><p class="small">The transaction is funded. The supplier has not received the release yet.</p></div>` : d.supplier_paid ? `<div style="background:var(--green-light);padding:17px;border-radius:12px"><b style="color:#166534">🟢 Supplier has been paid</b><p class="small">The protected transaction has completed.</p></div>` : `<div style="background:var(--red-light);padding:17px;border-radius:12px"><b style="color:#991b1b">🔴 Waiting for customer payment</b></div>`}</div>
+            <div class="card"><div class="label">TRANSACTION PROTECTION</div><h2>Where is the money?</h2>${moneyStateBox(d)}</div>
         </section>
+
         <section class="card section">
-            <div class="label">PROTOTYPE CONTROLS</div>
-            <h2>Simulate the transaction</h2>
-            <p class="muted small">These buttons simulate the states. In production events come from verified payment and delivery systems.</p>
-            <div style="display:flex;gap:10px;flex-wrap:wrap">
-                ${!d.buyer_paid ? `<button class="btn btn-green" onclick="buyerCredit('${d.id}')">🟢 Simulate Customer Credit</button>` : ""}
-                ${d.buyer_paid && !d.supplier_delivered ? `<button class="btn btn-primary" onclick="supplierDeliver('${d.id}')">📦 Simulate Supplier Delivery</button>` : ""}
-                ${d.supplier_delivered && !d.supplier_paid ? `<button class="btn btn-green" onclick="releasePayment('${d.id}')">💰 Release Supplier Payment</button>` : ""}
-                ${!d.supplier_paid && !d.dispute ? `<button class="btn btn-red" onclick="openDispute('${d.id}')">⚠ Open Dispute</button>` : ""}
-            </div>
+            <div class="label">TRANSACTION CONTROLS</div>
+            <h2>Advance the deal</h2>
+            <p class="muted small">These buttons simulate real-world events. In production, they come from verified payment, logistics and delivery systems.</p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">${actionButtons(d)}</div>
         </section>
     </main>`;
 }
 
+function logisticsSection(d) {
+    let hasLogistics = !!d.logistics_company;
+    let checkpoints = hasLogistics ? buildCheckpoints(d) : [];
+    let currentIdx = d.logistics_checkpoint || 0;
+
+    let checkpointsHtml = hasLogistics ? checkpoints.map((c, i) => {
+        let cls = i < currentIdx ? "done" : i === currentIdx && d.status === "in_transit" ? "current" : "";
+        return `<div class="checkpoint"><div class="checkpoint-dot ${cls}"></div><div class="small">${c}</div></div>`;
+    }).join("") : "";
+
+    return `
+        <section class="card section">
+            <div class="page-header">
+                <div><div class="label">LOGISTICS</div><h2>Shipment tracking</h2></div>
+                ${hasLogistics ? `<span class="badge badge-purple">📦 ${d.logistics_company}</span>` : `<span class="badge badge-orange">Awaiting logistics choice</span>`}
+            </div>
+
+            ${!hasLogistics ? `
+                <p class="muted">The supplier chooses the logistics company once the deal is funded. The tracking ID will appear here for the buyer to confirm.</p>
+            ` : `
+                <div class="grid grid-2" style="margin-bottom:16px">
+                    <div class="logistics-box">
+                        <div class="label">LOGISTICS COMPANY</div>
+                        <h3 style="margin:6px 0">${d.logistics_company}</h3>
+                        <div class="small muted">Tracking ID: <b>${d.tracking_id}</b></div>
+                        ${d.buyer_confirmed_tracking ? `<div style="margin-top:8px"><span class="badge badge-green">✓ Tracking ID confirmed by buyer</span></div>` : `<div style="margin-top:8px"><span class="badge badge-orange">⏳ Awaiting buyer confirmation of tracking ID</span></div>`}
+                    </div>
+                    <div class="logistics-box">
+                        <div class="label">LIVE STATUS</div>
+                        <h3 style="margin:6px 0">${d.logistics_location || "Preparing for pickup"}</h3>
+                        ${d.logistics_region ? `<div class="small muted">Region: ${d.logistics_region}</div>` : ""}
+                        ${d.logistics_eta ? `<div class="small muted">Estimated delivery: <b>${d.logistics_eta}</b></div>` : ""}
+                    </div>
+                </div>
+                ${checkpointsHtml ? `<div style="margin-top:6px">${checkpointsHtml}</div>` : ""}
+            `}
+        </section>
+    `;
+}
+
+function moneyStateBox(d) {
+    if (d.supplier_paid) {
+        return `<div style="background:var(--green-light);padding:17px;border-radius:12px"><b style="color:#166534">🟢 Supplier has been paid</b><p class="small">The protected transaction has completed.</p></div>`;
+    }
+    if (d.buyer_paid && d.status === "delivered") {
+        return `<div style="background:var(--blue-light);padding:17px;border-radius:12px"><b style="color:#1d4ed8">🔵 Delivered — awaiting buyer confirmation</b><p class="small">Funds stay in escrow until the buyer confirms receipt.</p></div>`;
+    }
+    if (d.buyer_paid) {
+        return `<div style="background:var(--green-light);padding:17px;border-radius:12px"><b style="color:#166534">🟢 Customer has credited</b><p class="small">The transaction is funded. Funds will be released after delivery and buyer confirmation.</p></div>`;
+    }
+    return `<div style="background:var(--red-light);padding:17px;border-radius:12px"><b style="color:#991b1b">🔴 Waiting for customer payment</b><p class="small">The supplier will choose logistics once payment is secured.</p></div>`;
+}
+
+function actionButtons(d) {
+    let btns = [];
+
+    if (!d.buyer_paid) {
+        btns.push(`<button class="btn btn-green" onclick="fundDeal('${d.id}')">🟢 Fund Escrow (Buyer)</button>`);
+    }
+    if (d.buyer_paid && !d.logistics_company) {
+        btns.push(`<button class="btn btn-purple" onclick="openLogisticsPicker('${d.id}')">📦 Choose Logistics (Supplier)</button>`);
+    }
+    if (d.logistics_company && !d.buyer_confirmed_tracking) {
+        btns.push(`<button class="btn btn-primary" onclick="confirmTracking('${d.id}')">✅ Confirm Tracking ID (Buyer)</button>`);
+    }
+    if (d.buyer_confirmed_tracking && !["picked_up", "in_transit", "delivered", "completed"].includes(d.status)) {
+        btns.push(`<button class="btn btn-purple" onclick="markPickedUp('${d.id}')">🚚 Mark Handed to Courier (Supplier)</button>`);
+    }
+    if (d.status === "picked_up") {
+        btns.push(`<button class="btn btn-primary" onclick="simulateInTransit('${d.id}')">📍 Simulate In Transit</button>`);
+    }
+    if (d.status === "in_transit") {
+        btns.push(`<button class="btn btn-primary" onclick="advanceCheckpoint('${d.id}')">➡️ Advance Checkpoint</button>`);
+        btns.push(`<button class="btn btn-purple" onclick="simulateDelivered('${d.id}')">📬 Simulate Delivered</button>`);
+    }
+    if (d.status === "delivered" && !d.supplier_paid) {
+        btns.push(`<button class="btn btn-green" onclick="confirmReceipt('${d.id}')">💰 Confirm Receipt & Release Funds (Buyer)</button>`);
+    }
+    if (d.buyer_paid && !d.supplier_paid && !d.dispute) {
+        btns.push(`<button class="btn btn-red" onclick="openDispute('${d.id}')">⚠ Open Dispute</button>`);
+    }
+
+    if (btns.length === 0) return `<p class="muted small">No actions available right now.</p>`;
+    return btns.join("");
+}
+
+// ============================================================
+// TRANSACTION ACTIONS
+// ============================================================
 async function updateDeal(id, fn) {
     let ds = cache.deals.length > 0 ? cache.deals : get(STORAGE.deals);
     let d = ds.find(x => x.id === id);
@@ -735,10 +973,166 @@ async function updateDeal(id, fn) {
     navigate("transaction", id);
 }
 
-async function buyerCredit(id) { await updateDeal(id, d => { d.buyer_paid = true; d.status = "escrow"; addNotification("Customer credited", d.id + " is now secured.", "green"); }); toast("Customer credited. Funds secured."); }
-async function supplierDeliver(id) { await updateDeal(id, d => { if (!d.buyer_paid) { toast("Customer must credit first."); return; } d.supplier_delivered = true; d.status = "delivered"; addNotification("Delivery marked", d.id + " delivered.", "blue"); }); toast("Supplier delivery recorded."); }
-async function releasePayment(id) { await updateDeal(id, d => { if (!d.supplier_delivered) { toast("Delivery must be confirmed."); return; } d.supplier_paid = true; d.status = "completed"; addNotification("Payment released", money(d.amount) + " released.", "green"); }); toast("Payment released. Deal completed."); }
-async function openDispute(id) { await updateDeal(id, d => { d.dispute = true; d.status = "dispute"; addNotification("Dispute opened", d.id + " paused.", "red"); }); toast("Dispute opened."); }
+async function fundDeal(id) {
+    await updateDeal(id, d => {
+        d.buyer_paid = true;
+        d.status = "escrow";
+    });
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) {
+        await addNotification("Escrow funded", d.id + " — funds are secured in TrustDeal.", "green");
+        if (d.supplier_email) await addNotification("Funds secured — choose logistics", d.id + " is now funded. Please select a logistics company.", "purple", d.supplier_email);
+    }
+    toast("Escrow funded. Supplier can now choose logistics.");
+}
+
+function openLogisticsPicker(id) {
+    let options = LOGISTICS_COMPANIES.map(c => `<option value="${c}">${c}</option>`).join("");
+    let modal = document.createElement("div");
+    modal.id = "logistics-modal";
+    modal.style.cssText = "position:fixed;inset:0;background:rgba(15,23,42,.6);display:grid;place-items:center;z-index:1000;padding:20px";
+    modal.innerHTML = `
+        <div class="card" style="width:min(440px,100%)">
+            <div class="label">SUPPLIER ACTION</div>
+            <h2>Choose a logistics company</h2>
+            <p class="muted small">The buyer will receive the tracking ID for confirmation.</p>
+            <label>Logistics company
+                <select id="modal-logistics" class="input" onchange="document.getElementById('modal-custom-wrap').style.display = this.value === '__other__' ? 'block' : 'none'">
+                    ${options}
+                    <option value="__other__">Other (enter manually)</option>
+                </select>
+            </label>
+            <label id="modal-custom-wrap" style="display:none">Custom logistics name
+                <input id="modal-custom" class="input" placeholder="SwiftCourier Ltd">
+            </label>
+            <div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">
+                <button class="btn btn-light" onclick="document.getElementById('logistics-modal').remove()">Cancel</button>
+                <button class="btn btn-purple" onclick="submitLogistics('${id}')">Confirm & Generate Tracking ID</button>
+            </div>
+        </div>`;
+    document.body.appendChild(modal);
+}
+
+async function submitLogistics(id) {
+    let sel = document.getElementById("modal-logistics").value;
+    let companyName = sel === "__other__" ? (document.getElementById("modal-custom").value || "").trim() : sel;
+    if (!companyName) { toast("Please enter the logistics company name."); return; }
+    let trackingId = generateTrackingId(companyName);
+
+    let modal = document.getElementById("logistics-modal");
+    if (modal) modal.remove();
+
+    await updateDeal(id, d => {
+        d.logistics_company = companyName;
+        d.tracking_id = trackingId;
+        d.status = "logistics_chosen";
+    });
+
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) {
+        await addNotification("Logistics chosen", d.id + " — " + companyName + " · " + trackingId, "purple");
+        if (d.buyer_email) await addNotification("Tracking ID received", d.id + " — " + companyName + " · " + trackingId + ". Please confirm.", "purple", d.buyer_email);
+    }
+    toast("Logistics confirmed. Tracking ID generated.");
+}
+
+async function confirmTracking(id) {
+    await updateDeal(id, d => {
+        d.buyer_confirmed_tracking = true;
+        d.status = "tracking_confirmed";
+    });
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) {
+        await addNotification("Tracking ID confirmed", d.id + " — buyer acknowledged " + d.tracking_id, "green");
+        if (d.supplier_email) await addNotification("Buyer confirmed tracking", d.id + " — safe to hand over to courier.", "green", d.supplier_email);
+    }
+    toast("Tracking ID confirmed.");
+}
+
+async function markPickedUp(id) {
+    await updateDeal(id, d => {
+        d.status = "picked_up";
+        d.logistics_checkpoint = 0;
+        let checkpoints = buildCheckpoints(d);
+        d.logistics_location = checkpoints[0];
+        d.logistics_region = pickRegionFor(d.delivery).region;
+    });
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) {
+        await addNotification("Handed to courier", d.id + " — collected by " + d.logistics_company, "purple");
+        if (d.buyer_email) await addNotification("Shipment in progress", d.id + " — " + d.logistics_company + " has collected your goods.", "purple", d.buyer_email);
+    }
+    toast("Courier has the goods.");
+}
+
+async function simulateInTransit(id) {
+    await updateDeal(id, d => {
+        d.status = "in_transit";
+        d.logistics_checkpoint = 1;
+        let checkpoints = buildCheckpoints(d);
+        d.logistics_location = checkpoints[1];
+        d.logistics_region = pickRegionFor(d.delivery).region;
+        d.logistics_eta = ETA_OPTIONS[Math.floor(Math.random() * ETA_OPTIONS.length)];
+    });
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) {
+        await addNotification("In transit", d.id + " — " + d.logistics_location, "purple");
+        if (d.buyer_email) await addNotification("Your shipment is moving", d.id + " — " + d.logistics_location + " · ETA " + d.logistics_eta, "purple", d.buyer_email);
+    }
+    toast("Shipment is in transit.");
+}
+
+async function advanceCheckpoint(id) {
+    await updateDeal(id, d => {
+        let checkpoints = buildCheckpoints(d);
+        d.logistics_checkpoint = Math.min((d.logistics_checkpoint || 0) + 1, checkpoints.length - 1);
+        d.logistics_location = checkpoints[d.logistics_checkpoint];
+        d.logistics_eta = d.logistics_checkpoint >= checkpoints.length - 1 ? "Arriving now" : ETA_OPTIONS[Math.floor(Math.random() * 3)];
+    });
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) await addNotification("Checkpoint", d.id + " — " + d.logistics_location, "purple");
+    toast("Checkpoint advanced.");
+}
+
+async function simulateDelivered(id) {
+    await updateDeal(id, d => {
+        d.status = "delivered";
+        d.logistics_checkpoint = 4;
+        d.logistics_location = "Delivered to buyer";
+        d.logistics_eta = "Delivered";
+    });
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) {
+        await addNotification("Delivered", d.id + " — awaiting buyer confirmation.", "blue");
+        if (d.buyer_email) await addNotification("Delivered — please confirm", d.id + " — confirm receipt to release funds.", "blue", d.buyer_email);
+    }
+    toast("Delivered. Awaiting buyer confirmation.");
+}
+
+async function confirmReceipt(id) {
+    await updateDeal(id, d => {
+        d.buyer_confirmed_receipt = true;
+        d.supplier_delivered = true;
+        d.supplier_paid = true;
+        d.status = "completed";
+    });
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) {
+        await addNotification("Payment released", d.id + " — " + money(d.amount) + " released to " + d.supplier, "green");
+        if (d.supplier_email) await addNotification("You've been paid", d.id + " — " + money(d.amount) + " released.", "green", d.supplier_email);
+    }
+    toast("Receipt confirmed. Funds released to supplier.");
+}
+
+async function openDispute(id) {
+    await updateDeal(id, d => {
+        d.dispute = true;
+        d.status = "dispute";
+    });
+    let d = cache.deals.find(x => x.id === id) || get(STORAGE.deals).find(x => x.id === id);
+    if (d) await addNotification("Dispute opened", d.id + " paused for review.", "red");
+    toast("Dispute opened.");
+}
 
 // ============================================================
 // TRANSACTIONS LIST
@@ -747,14 +1141,14 @@ function transactionsPage() {
     let user = currentUser();
     if (!user) return login();
     let allDeals = cache.deals.length > 0 ? cache.deals : get(STORAGE.deals);
-    let deals = allDeals.filter(d => d.buyer === user.name || d.supplier === user.name || d.buyer === user.business_name || d.supplier === user.business_name);
-    
+    let deals = allDeals.filter(d => userMatchesDeal(user, d));
+
     return `${dashboardNavbar()}
     <main class="container">
         <div class="page-header"><div><div class="label">TRANSACTIONS</div><h1>Your deals</h1><p class="muted">${deals.length} transaction${deals.length !== 1 ? "s" : ""}</p></div><button class="btn btn-green" onclick="navigate('create')">+ New Deal</button></div>
         <div class="card">
             ${deals.length === 0 ? `<div class="empty-state"><div class="icon">📋</div><h2>No transactions</h2><p>Start your first protected transaction now.</p><button class="btn btn-green" onclick="navigate('create')" style="margin-top:16px">+ Create Your First Deal</button></div>` :
-            `<div class="table-wrapper"><table><thead><tr><th>Deal</th><th>Buyer</th><th>Supplier</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody>${deals.map(d => `<tr><td><b>${d.title}</b><div class="small muted">${d.id}</div></td><td>${d.buyer}</td><td>${d.supplier}</td><td>${money(d.amount)}</td><td>${d.status === "escrow" ? '<span class="badge badge-green">🟢 Escrow</span>' : d.status === "completed" ? '<span class="badge badge-green">🟢 Completed</span>' : d.status === "dispute" ? '<span class="badge badge-red">🔴 Dispute</span>' : '<span class="badge badge-orange">🟠 Pending</span>'}</td><td><button class="btn btn-light" onclick="navigate(\'transaction\',\'${d.id}\')">Open</button></td></tr>`).join("")}</tbody></table></div>`}
+            `<div class="table-wrapper"><table><thead><tr><th>Deal</th><th>Buyer</th><th>Supplier</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody>${deals.map(d => `<tr><td><b>${d.title}</b><div class="small muted">${d.id}</div></td><td>${d.buyer}</td><td>${d.supplier}</td><td>${money(d.amount)}</td><td>${statusBadge(d)}</td><td><button class="btn btn-light" onclick="navigate('transaction','${d.id}')">Open</button></td></tr>`).join("")}</tbody></table></div>`}
         </div>
     </main>`;
 }
@@ -766,8 +1160,8 @@ function accountPage() {
     let user = currentUser();
     if (!user) return login();
     let allDeals = cache.deals.length > 0 ? cache.deals : get(STORAGE.deals);
-    let deals = allDeals.filter(d => d.buyer === user.name || d.supplier === user.name || d.buyer === user.business_name || d.supplier === user.business_name);
-    
+    let deals = allDeals.filter(d => userMatchesDeal(user, d));
+
     return `${dashboardNavbar()}
     <main class="container">
         <div class="page-header"><div><div class="label">ACCOUNT</div><h1>Your account</h1></div></div>
@@ -815,14 +1209,18 @@ function adminLogout() { localStorage.removeItem(STORAGE.admin); toast("Admin lo
 function adminDealStatus(d) {
     if (d.dispute) return '<span class="badge badge-red">🔴 DISPUTE</span>';
     if (d.supplier_paid) return '<span class="badge badge-green">🟢 COMPLETED</span>';
-    if (d.supplier_delivered) return '<span class="badge badge-blue">🔵 DELIVERY</span>';
+    if (d.status === "delivered") return '<span class="badge badge-blue">📬 DELIVERED</span>';
+    if (d.status === "in_transit") return '<span class="badge badge-purple">📍 IN TRANSIT</span>';
+    if (d.status === "picked_up") return '<span class="badge badge-purple">🚚 PICKED UP</span>';
+    if (d.status === "tracking_confirmed") return '<span class="badge badge-purple">✅ TRACKING OK</span>';
+    if (d.status === "logistics_chosen") return '<span class="badge badge-purple">📦 LOGISTICS SET</span>';
     if (d.buyer_paid) return '<span class="badge badge-green">🟢 ESCROW</span>';
     return '<span class="badge badge-orange">🟠 AWAITING FUNDING</span>';
 }
 
 function adminTransactionTable(ds) {
     if (!ds.length) return '<div class="empty-state"><div class="icon">📊</div><h2>No transactions</h2></div>';
-    return `<div class="table-wrapper"><table><thead><tr><th>Transaction</th><th>Customer</th><th>Supplier</th><th>Value</th><th>Position</th><th></th></tr></thead><tbody>${ds.map(d => `<tr><td><b>${d.id}</b><div class="small muted">${d.title}</div></td><td>${d.buyer}</td><td>${d.supplier}</td><td>${money(d.amount)}</td><td>${adminDealStatus(d)}</td><td><button class="btn btn-light" onclick="navigate('admin-transaction','${d.id}')">Monitor</button></td></tr>`).join("")}</tbody></table></div>`;
+    return `<div class="table-wrapper"><table><thead><tr><th>Transaction</th><th>Customer</th><th>Supplier</th><th>Value</th><th>Logistics</th><th>Position</th><th></th></tr></thead><tbody>${ds.map(d => `<tr><td><b>${d.id}</b><div class="small muted">${d.title}</div></td><td>${d.buyer}</td><td>${d.supplier}</td><td>${money(d.amount)}</td><td class="small">${d.logistics_company ? `<b>${d.logistics_company}</b><div class="small muted">${d.tracking_id}</div>` : '<span class="muted">—</span>'}</td><td>${adminDealStatus(d)}</td><td><button class="btn btn-light" onclick="navigate('admin-transaction','${d.id}')">Monitor</button></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function adminDashboard() {
@@ -835,7 +1233,7 @@ function adminDashboard() {
     let dis = ds.filter(d => d.dispute).length;
     let sup = us.filter(u => u.role === "supplier").length;
     let customers = us.filter(u => u.role === "customer" || u.role === "business").length;
-    
+
     return `${adminNav()}
     <main class="container">
         <div class="page-header"><div><div class="label">TRUSTDEAL MANAGEMENT</div><h1>Admin Overview</h1><p class="muted">Monitor the entire marketplace.</p></div><span class="badge badge-green">● PLATFORM OPERATIONAL</span></div>
@@ -847,8 +1245,8 @@ function adminDashboard() {
         </section>
         <section class="grid grid-4 section">
             <div class="card"><div class="label">TOTAL DEALS</div><div class="stat-number">${ds.length}</div></div>
-            <div class="card"><div class="label">ACTIVE PIPELINE</div><div class="stat-number">${ds.filter(d => !d.supplier_paid && !d.dispute).length}</div></div>
-            <div class="card"><div class="label">WAITING FUNDING</div><div class="stat-number">${ds.filter(d => !d.buyer_paid && !d.dispute).length}</div></div>
+            <div class="card" style="background:var(--purple-light)"><div class="label">IN LOGISTICS</div><div class="stat-number">${ds.filter(d => ["logistics_chosen","tracking_confirmed","picked_up","in_transit"].includes(d.status)).length}</div></div>
+            <div class="card" style="background:var(--blue-light)"><div class="label">DELIVERED</div><div class="stat-number">${ds.filter(d => d.status === "delivered").length}</div></div>
             <div class="card"><div class="label">DISPUTES</div><div class="stat-number" style="color:${dis ? "var(--red)" : "var(--green)"}">${dis}</div></div>
         </section>
         <section class="card section">
@@ -874,7 +1272,7 @@ function adminSuppliers() {
     return `${adminNav()}
     <main class="container">
         <div class="page-header"><div><div class="label">SUPPLIER MANAGEMENT</div><h1>Suppliers</h1><p class="muted">${us.length} registered suppliers</p></div></div>
-        ${us.length === 0 ? `<div class="card"><div class="empty-state"><div class="icon">🏭</div><h2>No suppliers yet</h2></div></div>` : `<div class="grid grid-2">${us.map(u => { let name = u.business_name || u.name; let x = ds.filter(d => d.supplier === name); let v = x.reduce((s, d) => s + d.amount, 0); return `<div class="card"><div class="page-header"><div><div class="label">SUPPLIER</div><h2>${name}</h2><div class="muted">${u.email}</div></div>${u.verified ? '<span class="badge badge-green">✓ Verified</span>' : '<span class="badge badge-orange">Pending</span>'}</div><div class="grid grid-3"><div><div class="label">DEALS</div><b>${x.length}</b></div><div><div class="label">VALUE</div><b>${x.length === 0 ? "₦0" : money(v)}</b></div><div><div class="label">COMPLETED</div><b>${x.filter(d => d.status === "completed").length}</b></div></div></div>` }).join("")}</div>`}</main>`;
+        ${us.length === 0 ? `<div class="card"><div class="empty-state"><div class="icon">🏭</div><h2>No suppliers yet</h2></div></div>` : `<div class="grid grid-2">${us.map(u => { let name = u.business_name || u.name; let x = ds.filter(d => d.supplier === name || d.supplier_email === u.email); let v = x.reduce((s, d) => s + d.amount, 0); return `<div class="card"><div class="page-header"><div><div class="label">SUPPLIER</div><h2>${name}</h2><div class="muted">${u.email}</div></div>${u.verified ? '<span class="badge badge-green">✓ Verified</span>' : '<span class="badge badge-orange">Pending</span>'}</div><div class="grid grid-3"><div><div class="label">DEALS</div><b>${x.length}</b></div><div><div class="label">VALUE</div><b>${x.length === 0 ? "₦0" : money(v)}</b></div><div><div class="label">COMPLETED</div><b>${x.filter(d => d.status === "completed").length}</b></div></div></div>` }).join("")}</div>`}</main>`;
 }
 
 function adminTransactions() {
@@ -892,7 +1290,7 @@ function adminTransaction(id) {
     let ds = cache.deals.length > 0 ? cache.deals : get(STORAGE.deals);
     let d = ds.find(x => x.id === id);
     if (!d) return `${adminNav()}<main class="container"><div class="card"><h1>Transaction not found</h1><button class="btn btn-light" onclick="navigate('admin')">Back</button></div></main>`;
-    
+
     return `${adminNav()}
     <main class="container">
         <div class="page-header"><div><div class="label">ADMIN MONITOR</div><h1>${d.id}</h1><p class="muted">${d.title}</p></div>${adminDealStatus(d)}</div>
@@ -903,9 +1301,17 @@ function adminTransaction(id) {
                 <div class="party-card supplier"><div class="party-icon red">🏭</div><div class="label">SUPPLIER</div><h2>${d.supplier}</h2><div class="money">${money(d.amount)}</div><span class="badge ${d.supplier_paid ? "badge-green" : "badge-red"}">${d.supplier_paid ? "🟢 PAID" : "🔴 PAYMENT LOCKED"}</span></div>
             </div>
         </section>
+        ${d.logistics_company ? `
+        <section class="card section">
+            <div class="page-header"><div><div class="label">LOGISTICS</div><h2>${d.logistics_company}</h2></div><span class="badge badge-purple">📦 ${d.tracking_id}</span></div>
+            <div class="grid grid-2">
+                <div><div class="label">CURRENT LOCATION</div><p>${d.logistics_location || "Preparing"}</p></div>
+                <div><div class="label">ETA</div><p>${d.logistics_eta || "—"}</p></div>
+            </div>
+        </section>` : ""}
         <section class="grid grid-2 section">
             <div class="card"><div class="label">DETAILS</div><p><b>Product:</b> ${d.product}</p><p><b>Quantity:</b> ${d.quantity}</p><p><b>Delivery:</b> ${d.delivery}</p><p><b>Condition:</b> ${d.condition}</p></div>
-            <div class="card"><div class="label">TIMELINE</div><div style="display:grid;gap:8px;margin-top:8px"><div>${d.buyer_paid ? "✅ Customer funded" : "⏳ Awaiting funding"}</div><div>${d.supplier_delivered ? "✅ Delivery confirmed" : "⏳ Awaiting delivery"}</div><div>${d.supplier_paid ? "✅ Payment released" : "⏳ Payment locked"}</div></div></div>
+            <div class="card"><div class="label">TIMELINE</div><div style="display:grid;gap:8px;margin-top:8px"><div>${d.buyer_paid ? "✅ Customer funded" : "⏳ Awaiting funding"}</div><div>${d.logistics_company ? "✅ Logistics: " + d.logistics_company : "⏳ Awaiting logistics"}</div><div>${d.supplier_delivered ? "✅ Delivery confirmed" : "⏳ Awaiting delivery"}</div><div>${d.supplier_paid ? "✅ Payment released" : "⏳ Payment locked"}</div></div></div>
         </section>
         ${d.dispute ? `<section class="card section" style="border:2px solid var(--red);background:var(--red-light)"><div class="label">ACTION REQUIRED</div><h2>🔴 Dispute is open</h2><button class="btn btn-red" onclick="resolveDispute('${d.id}')">Resolve dispute</button></section>` : ""}
     </main>`;
@@ -922,16 +1328,20 @@ function adminDisputes() {
 }
 
 async function resolveDispute(id) {
+    let ds = cache.deals.length > 0 ? cache.deals : get(STORAGE.deals);
+    let d = ds.find(x => x.id === id);
+    if (!d) return;
+    let newStatus = d.buyer_paid ? (d.logistics_company ? "logistics_chosen" : "escrow") : "pending";
     try {
-        await supabase.updateDeal(id, { dispute: false, status: "pending" });
+        await supabase.updateDeal(id, { dispute: false, status: newStatus });
         await syncData();
         await addNotification("Dispute resolved", id + " reviewed.", "green");
         toast("Dispute resolved.");
         navigate("admin-transaction", id);
     } catch {
-        let ds = get(STORAGE.deals);
-        let d = ds.find(x => x.id === id);
-        if (d) { d.dispute = false; d.status = "pending"; set(STORAGE.deals, ds); }
+        let ds2 = get(STORAGE.deals);
+        let d2 = ds2.find(x => x.id === id);
+        if (d2) { d2.dispute = false; d2.status = newStatus; set(STORAGE.deals, ds2); }
         toast("Dispute resolved.");
         navigate("admin-transaction", id);
     }
@@ -977,16 +1387,11 @@ console.log("📊 Data stored in Supabase");
 // AUTO-LOGIN FROM EMAIL VERIFICATION LINK
 // ============================================================
 async function handleEmailVerification() {
-    // Supabase appends tokens to the URL hash after email confirmation, e.g.
-    // https://your-app/#access_token=...&type=signup
     const hash = window.location.hash || "";
     const hasAuthToken = hash.includes("access_token") || hash.includes("type=signup") || hash.includes("type=recovery");
 
     if (hasAuthToken) {
-        // Clean the URL so tokens don't linger
         window.history.replaceState({}, document.title, window.location.pathname);
-
-        // Let the user know, then send them to login
         setTimeout(() => {
             toast("✅ Email verified! Please log in.");
             navigate("login");
@@ -994,5 +1399,4 @@ async function handleEmailVerification() {
     }
 }
 
-// Run this check immediately on page load
 handleEmailVerification();
