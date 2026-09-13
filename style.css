@@ -537,3 +537,71 @@ th {
         flex-direction: column;
     }
 }
+
+/* ============================================================ */
+/* LOGISTICS FLOW ADDITIONS                                      */
+/* ============================================================ */
+
+:root {
+    --purple: #7c3aed;
+    --purple-light: #ede9fe;
+}
+
+.btn-purple {
+    background: var(--purple);
+    color: #fff;
+}
+
+.btn-purple:hover {
+    background: #6d28d9;
+}
+
+.badge-purple {
+    background: var(--purple-light);
+    color: #5b21b6;
+}
+
+.party-card.logistics {
+    border-color: #ddd6fe;
+}
+
+.party-icon.purple {
+    background: var(--purple-light);
+}
+
+.logistics-box {
+    background: var(--purple-light);
+    border: 1px solid #ddd6fe;
+    border-radius: 15px;
+    padding: 15px;
+}
+
+.checkpoint {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--line);
+}
+
+.checkpoint:last-child {
+    border-bottom: none;
+}
+
+.checkpoint-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--line);
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+
+.checkpoint-dot.done {
+    background: var(--purple);
+}
+
+.checkpoint-dot.current {
+    background: var(--green);
+    box-shadow: 0 0 0 4px var(--green-light);
+}
