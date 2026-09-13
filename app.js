@@ -156,6 +156,7 @@ async function syncData() {
         set(STORAGE.notifications, cache.notifications);
         console.log("✅ Synced:", cache.users.length, "users");
     } catch (error) {
+        console.error("❌ Supabase sync failed:", error);
         console.log("Using cached data");
         cache.users = get(STORAGE.users);
         cache.deals = get(STORAGE.deals);
@@ -319,27 +320,74 @@ async function loginUser(e) {
     e.preventDefault();
     let email = document.getElementById("login-email").value.trim();
     let password = document.getElementById("login-password").value;
-    
+
+    // 1. Ask Supabase Auth if this email + password is valid
+    let authResult;
+    try {
+        authResult = await supabase.signIn(email, password);
+    } catch (err) {
+        toast("Could not reach server. Check your connection.");
+        return;
+    }
+
+    // 2. Handle Supabase errors
+    if (!authResult || authResult.error) {
+        const msg = (authResult && authResult.error_description) || (authResult && authResult.error && authResult.error.message) || "Login failed.";
+        if (msg.toLowerCase().includes("email not confirmed")) {
+            toast("⚠️ Please confirm your email first. Check your inbox.");
+        } else if (msg.toLowerCase().includes("invalid")) {
+            toast("Wrong email or password.");
+        } else {
+            toast(msg);
+        }
+        return;
+    }
+
+    if (!authResult.user || !authResult.user.id) {
+        toast("Login failed. Please try again.");
+        return;
+    }
+
+    const authUserId = authResult.user.id;
+
+    // 3. Refresh local cache from Supabase
     await syncData();
-    let user = cache.users.find(u => u.email === email);
-    
+
+    // 4. Find matching profile row by auth_user_id (not email)
+    let user = cache.users.find(u => u.auth_user_id === authUserId);
+
+    // 5. If missing (orphan auth user), auto-create the profile row
     if (!user) {
-        toast("Account not found. Please sign up first.");
-        return;
+        const meta = authResult.user.user_metadata || {};
+        user = {
+            id: "USR-" + id(),
+            auth_user_id: authUserId,
+            name: meta.name || email.split("@")[0],
+            email: email,
+            phone: meta.phone || "",
+            role: meta.role || "customer",
+            business_name: meta.business_name || "",
+            verified: !!authResult.user.email_confirmed_at,
+            trust_score: 50,
+            joined: new Date().toISOString().split("T")[0]
+        };
+        try {
+            await supabase.createUser(user);
+            await syncData();
+        } catch (err) {
+            console.warn("Could not save profile row:", err);
+        }
+    } else if (user.verified === false && authResult.user.email_confirmed_at) {
+        // Row exists but still marked unverified -> flip it
+        try {
+            await supabase.updateUser(email, { verified: true });
+            user.verified = true;
+        } catch (err) { /* ignore */ }
     }
-    
-    if (user.password !== password) {
-        toast("Wrong password. Please try again.");
-        return;
-    }
-    
-    if (user.verified === false) {
-        toast("⚠️ Please verify your email first. Check your inbox!");
-        return;
-    }
-    
-    localStorage.setItem(STORAGE.session, email);
-    toast("Welcome back, " + user.name + "!");
+
+    // 6. Set session and go to dashboard
+    localStorage.setItem(STORAGE.session, user.email);
+    toast("Welcome back, " + (user.name || "friend") + "!");
     navigate("dashboard");
 }
 
@@ -375,74 +423,87 @@ async function createAccount(e) {
     let phone = document.getElementById("signup-phone").value.trim();
     let role = document.getElementById("signup-role").value;
     let businessName = document.getElementById("signup-business").value.trim() || "";
-    
-    await syncData();
-    
-    if (Array.isArray(cache.users) && cache.users.some(u => u.email === email)) {
-        toast("Email already exists. Please login.");
-        return;
-    }
-    
+
+    // 1. Create Supabase Auth user
+    let authResult;
     try {
-        const authResult = await supabase.signUp(email, password, {
+        authResult = await supabase.signUp(email, password, {
             name, phone, role, business_name: businessName
         });
-        
-        if (authResult.error) {
-            toast(authResult.error.message || "Sign up failed.");
+    } catch (err) {
+        toast("Could not reach server. Check your connection.");
+        return;
+    }
+
+    if (!authResult || authResult.error) {
+        const msg = (authResult && authResult.error_description) || (authResult && authResult.error && authResult.error.message) || "Sign up failed.";
+        toast(msg);
+        return;
+    }
+
+    if (!authResult.user || !authResult.user.id) {
+        toast("Sign up failed. Please try again.");
+        return;
+    }
+
+    // 2. Create matching profile row in the users table
+    const user = {
+        id: "USR-" + id(),
+        auth_user_id: authResult.user.id,
+        name, email, phone, role,
+        business_name: businessName,
+        verified: !!authResult.user.email_confirmed_at,
+        trust_score: 50,
+        joined: new Date().toISOString().split("T")[0]
+    };
+
+    try {
+        const insertResult = await supabase.createUser(user);
+        // Supabase returns an array on success, or an object with `error`/`code` on failure
+        if (!Array.isArray(insertResult)) {
+            document.getElementById("app").innerHTML = `
+                <div class="auth-page">
+                    <div class="auth-card" style="text-align:center">
+                        <div class="logo">Trust<span>Deal</span></div>
+                        <h1>⚠️ Profile save failed</h1>
+                        <p class="muted">Your login account was created, but we could not save your profile.</p>
+                        <p class="muted small">Try logging in — if it fails, please contact support with this email: <b>${email}</b></p>
+                        <button class="btn btn-primary" onclick="navigate('login')" style="margin-top:20px">Go to Login</button>
+                    </div>
+                </div>`;
             return;
         }
-        
-        // Save the user to your database but mark them as NOT verified
-        let user = {
-            id: "USR-" + id(),
-            name, email, phone, password, role,
-            business_name: businessName,
-            verified: false, 
-            trust_score: 50,
-            joined: new Date().toISOString().split("T")[0]
-        };
-
-        // 🔥 NEW LINE ADDED: Save the Supabase Auth ID so we can link them
-        user.auth_user_id = authResult.user?.id; 
-        
-        await supabase.createUser(user);
-        await syncData();
-        
-        // Clear the form
-        document.getElementById('signup-name').value = '';
-        document.getElementById('signup-email').value = '';
-        document.getElementById('signup-phone').value = '';
-        document.getElementById('signup-password').value = '';
-        
-        // 🚨 SHOW A BIG MESSAGE THAT THEY MUST CHECK THEIR EMAIL 🚨
+    } catch (err) {
         document.getElementById("app").innerHTML = `
             <div class="auth-page">
                 <div class="auth-card" style="text-align:center">
                     <div class="logo">Trust<span>Deal</span></div>
-                    <div class="label" style="margin-top:25px">VERIFY YOUR EMAIL</div>
-                    <h1>📧 Check your inbox!</h1>
-                    <p class="muted">We sent a confirmation link to <b>${email}</b>.</p>
-                    <p class="muted">Please click the link in the email to activate your account, then log in.</p>
+                    <h1>⚠️ Profile save failed</h1>
+                    <p class="muted">Your login account was created, but we could not save your profile.</p>
+                    <p class="muted small">Try logging in — if it fails, contact support. Email: <b>${email}</b></p>
                     <button class="btn btn-primary" onclick="navigate('login')" style="margin-top:20px">Go to Login</button>
                 </div>
             </div>`;
-        
-    } catch (error) {
-        let user = {
-            id: "USR-" + id(),
-            name, email, phone, password, role,
-            business_name: businessName,
-            verified: false,
-            trust_score: 50,
-            joined: new Date().toISOString().split("T")[0]
-        };
-        let users = get(STORAGE.users);
-        users.push(user);
-        set(STORAGE.users, users);
-        toast("✅ Account created! Please verify your email.");
-        setTimeout(() => navigate('login'), 3000);
+        return;
     }
+
+    // 3. Success — clear form and show verification message
+    document.getElementById('signup-name').value = '';
+    document.getElementById('signup-email').value = '';
+    document.getElementById('signup-phone').value = '';
+    document.getElementById('signup-password').value = '';
+
+    document.getElementById("app").innerHTML = `
+        <div class="auth-page">
+            <div class="auth-card" style="text-align:center">
+                <div class="logo">Trust<span>Deal</span></div>
+                <div class="label" style="margin-top:25px">VERIFY YOUR EMAIL</div>
+                <h1>📧 Check your inbox!</h1>
+                <p class="muted">We sent a confirmation link to <b>${email}</b>.</p>
+                <p class="muted">Click the link in the email to activate your account, then log in.</p>
+                <button class="btn btn-primary" onclick="navigate('login')" style="margin-top:20px">Go to Login</button>
+            </div>
+        </div>`;
 }
 
 function logout() {
@@ -916,40 +977,20 @@ console.log("📊 Data stored in Supabase");
 // AUTO-LOGIN FROM EMAIL VERIFICATION LINK
 // ============================================================
 async function handleEmailVerification() {
-    // Check if URL has the Supabase verify parameters
-    const urlParams = new URLSearchParams(window.location.search);
-    const token = urlParams.get('token');
-    const type = urlParams.get('type');
+    // Supabase appends tokens to the URL hash after email confirmation, e.g.
+    // https://your-app/#access_token=...&type=signup
+    const hash = window.location.hash || "";
+    const hasAuthToken = hash.includes("access_token") || hash.includes("type=signup") || hash.includes("type=recovery");
 
-    if (token && type === 'signup') {
-        // 1. Try to verify the token with Supabase
-        try {
-            const response = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
-                method: 'GET',
-                headers: {
-                    'apikey': SUPABASE_ANON_KEY
-                },
-                params: { token, type }
-            });
+    if (hasAuthToken) {
+        // Clean the URL so tokens don't linger
+        window.history.replaceState({}, document.title, window.location.pathname);
 
-            // 2. (Optional) The URL might not have the email, but we will look it up
-            // Since we can't easily parse the email here without extra setup, 
-            // we will just clean the URL and send them to login, where they can log in.
-            
-            // 3. Clean the URL (Remove the token so it doesn't stay in the address bar)
-            window.history.replaceState({}, document.title, window.location.pathname);
-
-            // 4. Show a welcome toast
+        // Let the user know, then send them to login
+        setTimeout(() => {
             toast("✅ Email verified! Please log in.");
-            
-            // 5. Redirect to login page
             navigate("login");
-            
-        } catch (error) {
-            console.error("Verification Error:", error);
-            toast("Verification failed. Please try logging in.");
-            navigate("login");
-        }
+        }, 200);
     }
 }
 
